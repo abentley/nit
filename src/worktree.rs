@@ -10,10 +10,10 @@ use super::git::{
     create_stash, delete_ref, eval_rev_spec, get_toplevel, git_switch, make_git_command,
     output_to_string, resolve_refname, run_git_command, set_head, set_setting, upsert_ref,
     BranchName, BranchyName, ConfigErr, GitError, LocalBranchName, OpenRepoError, ReferenceSpec,
-    SettingLocation, SettingTarget, UnparsedReference,
+    SettingLocation, SettingTarget, UnparsedReference, RepositoryT, RevwalkT,
 };
 use enum_dispatch::enum_dispatch;
-use git2::Repository;
+use git2;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
@@ -752,12 +752,12 @@ impl FromStr for CommitSpec {
     }
 }
 
-fn make_walker<'a>(
-    repo: &'a Repository,
+fn make_walker<'a, T: RepositoryT>(
+    repo: &'a T,
     commit: &Commit,
 ) -> Result<git2::Revwalk<'a>, git2::Error> {
     let mut walker = repo.revwalk()?;
-    walker.push(commit.sha.parse::<git2::Oid>()?)?;
+    walker.push(T::parse_oid(&commit.sha)?)?;
     walker.simplify_first_parent()?;
     Ok(walker)
 }
@@ -766,13 +766,13 @@ fn make_walker<'a>(
  * Revnos are *sort-of* 1-indexed.  0 is reserved for the "parent" of the first commit in contexts
  * where that makes sense (e.g. diff).
  */
-pub fn calc_revno(repo: &Repository, commit: &Commit) -> Result<i32, git2::Error> {
+pub fn calc_revno(repo: &impl RepositoryT, commit: &Commit) -> Result<i32, git2::Error> {
     let walker = make_walker(repo, commit)?;
     Ok((walker.count()).try_into().unwrap())
 }
 
 fn commit_from_revno(
-    repo: &Repository,
+    repo: &impl RepositoryT,
     tip: &Commit,
     revno: i32,
 ) -> Result<Option<Commit>, git2::Error> {
@@ -813,7 +813,7 @@ impl FromStr for Commit {
     type Err = CommitErr;
     fn from_str(spec: &str) -> std::result::Result<Self, <Self as FromStr>::Err> {
         if let Ok(revno) = spec.parse::<i32>() {
-            let repo = Repository::open_from_env()?;
+            let repo = git2::Repository::open_from_env()?;
             if let Ok(Some(found)) =
                 commit_from_revno(&repo, "HEAD".parse::<CommitSpec>()?.as_ref(), revno)
             {
@@ -1031,7 +1031,7 @@ pub fn check_create_target(branch: LocalBranchName) -> Result<LocalBranchName, S
 /// Convert the switch target into a BranchOrCommit.  The commit is resolved normally, but if the
 /// parameter refers to a remote branch, the branch is the local equivalent.
 pub fn determine_switch_target(
-    repo: &Repository,
+    repo: &impl RepositoryT,
     branch: BranchyName,
 ) -> Result<BranchOrCommit, SwitchErr> {
     let branchy = match branch.clone().resolve(repo) {
@@ -1106,7 +1106,7 @@ pub fn stash_switch(switch_type: SwitchType) -> Result<(), SwitchErr> {
         };
         BranchOrCommit::from(check_switch_branch(&top, target.as_ref())?.state)
     };
-    let repo = match Repository::open_from_env().map_err(OpenRepoError::from) {
+    let repo = match git2::Repository::open_from_env().map_err(OpenRepoError::from) {
         Ok(repo) => repo,
         Err(err) => {
             eprintln!("{}", err);

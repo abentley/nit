@@ -6,7 +6,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 use enum_dispatch::enum_dispatch;
-use git2::{Error, ErrorClass, ErrorCode, Repository};
+use git2;
+use git2::{Error, ErrorClass, ErrorCode};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -133,22 +134,90 @@ pub fn set_setting(
     Ok(())
 }
 
+pub trait ReferenceT {
+    fn shorthand(&self) -> Option<&str>;
+    fn name(&self) -> Option<&str>;
+}
+
+impl ReferenceT for git2::Reference<'_> {
+    fn shorthand(&self) -> Option<&str> {
+        self.shorthand()
+    }
+    fn name(&self) -> Option<&str> {
+        self.name()
+    }
+}
+
+pub trait GitErrorT{
+}
+
+impl GitErrorT for git2::Error {
+}
+
+pub trait RevwalkT{
+    type Error: GitErrorT;
+    fn push(&mut self, oid: git2::Oid) -> Result<(),Self::Error>;
+}
+
+impl RevwalkT for git2::Revwalk<'_>{
+    type Error = git2::Error;
+    fn push(&mut self, oid: git2::Oid) -> Result<(),Self::Error>{
+        git2::Revwalk::push(self, oid)
+    }
+}
+
+pub trait RepositoryT {
+    type Reference<'a>: ReferenceT
+    where
+        Self: 'a;
+    type Error: GitErrorT;
+    type Revwalk<'a>: RevwalkT where Self: 'a;
+    fn find_reference(&self, name: &str) -> Result<Self::Reference<'_>, Self::Error>;
+    fn resolve_reference_from_short_name(
+        &self,
+        any: &str,
+    ) -> Result<Self::Reference<'_>, git2::Error>;
+    fn revwalk(&self) -> Result<git2::Revwalk<'_>, git2::Error>;
+    fn parse_oid(sha: &str) -> Result<git2::Oid, git2::Error>;
+}
+
+impl RepositoryT for git2::Repository {
+    type Reference<'a> = git2::Reference<'a>;
+    type Error = git2::Error;
+    type Revwalk<'a> = git2::Revwalk<'a>;
+    fn find_reference(&self, name: &str) -> Result<Self::Reference<'_>, git2::Error> {
+        return git2::Repository::find_reference(self, name);
+    }
+    fn resolve_reference_from_short_name(
+        &self,
+        any: &str,
+    ) -> Result<Self::Reference<'_>, git2::Error> {
+        return git2::Repository::resolve_reference_from_short_name(self, any);
+    }
+    fn revwalk(&self) -> Result<Self::Revwalk<'_>, git2::Error> {
+        git2::Repository::revwalk(self)
+    }
+    fn parse_oid(sha: &str) -> Result<git2::Oid, git2::Error> {
+        sha.parse::<git2::Oid>()
+    }
+}
+
 #[enum_dispatch(BranchName)]
 pub trait ReferenceSpec {
     fn full(&self) -> Cow<str>;
     fn eval(&self) -> Result<String, Output> {
         eval_rev_spec(&self.full())
     }
-    fn find_reference<'repo>(
+    fn find_reference<'repo, T: RepositoryT>(
         &self,
-        repo: &'repo Repository,
-    ) -> Result<git2::Reference<'repo>, git2::Error> {
+        repo: &'repo T,
+    ) -> Result<T::Reference<'repo>, T::Error> {
         repo.find_reference(&self.full())
     }
-    fn find_shorthand(&self, repo: &Repository) -> Result<Option<String>, git2::Error> {
+    fn find_shorthand<T: RepositoryT>(&self, repo: &T) -> Result<Option<String>, T::Error> {
         Ok(self.find_reference(repo)?.shorthand().map(|s| s.to_owned()))
     }
-    fn find_shortest(&self, repo: &Repository) -> Cow<str> {
+    fn find_shortest(&self, repo: &impl RepositoryT) -> Cow<str> {
         match self.find_shorthand(repo) {
             Ok(Some(short_name)) => short_name.into(),
             _ => self.full(),
@@ -380,7 +449,7 @@ impl RefName {
         RefName::Long { full, short }
     }
     /// Convert long refname or shorthand into a RefName
-    pub fn from_any(any: String, repo: &Repository) -> Result<Self, RefErr> {
+    pub fn from_any(any: String, repo: &impl RepositoryT) -> Result<Self, RefErr> {
         let target = repo.resolve_reference_from_short_name(&any)?;
         Ok(if let Some(name) = target.name() {
             if name == any {
@@ -393,7 +462,7 @@ impl RefName {
         })
     }
     /// Return a RefName that has a short name, if it has one.
-    pub fn find_shorthand(self, repo: &Repository) -> Self {
+    pub fn find_shorthand(self, repo: &impl RepositoryT) -> Self {
         match self {
             RefName::Long {
                 full,
@@ -473,7 +542,7 @@ impl BranchyName {
             BranchyName::UnresolvedName(unresolved) => unresolved.into(),
         }
     }
-    pub fn resolve(self, repo: &Repository) -> Result<BranchyName, RefErr> {
+    pub fn resolve(self, repo: &impl RepositoryT) -> Result<BranchyName, RefErr> {
         let BranchyName::UnresolvedName(target) = &self else {
             return Ok(self);
         };
