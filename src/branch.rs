@@ -6,14 +6,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 use super::git::{
-    get_settings, resolve_refname, BranchName, LocalBranchName, RefErr, ReferenceSpec,
-    SettingEntry, SettingTarget, UnparsedReference,
+    get_settings, resolve_refname, BranchName, GitErrorT, LocalBranchName, RefErr as _RefErr,
+    ReferenceSpec, ReferenceT, RepositoryT, SettingEntry, SettingTarget, UnparsedReference,
 };
 use super::worktree::{target_branch_setting, Commit, Commitish, ExtantRefName};
-use git2::{Error, ErrorClass, ErrorCode, Reference, Repository};
+use git2::{ErrorClass, ErrorCode, Reference, Repository};
 use std::borrow::Cow;
 use std::fmt;
 use std::fmt::{Display, Formatter};
+
+type RefErr = _RefErr<git2::Error>;
 
 pub struct PrevRefErr(RefErr);
 
@@ -49,25 +51,25 @@ impl Display for NextRefErr {
     }
 }
 
-impl From<Error> for RefErr {
-    fn from(err: Error) -> RefErr {
+impl<T: GitErrorT> From<T> for _RefErr<T> {
+    fn from(err: T) -> _RefErr<T> {
         if err.class() == ErrorClass::Reference && err.code() == ErrorCode::NotFound {
-            return RefErr::NotFound(err);
+            return _RefErr::<T>::NotFound(err);
         }
-        RefErr::Other(err)
+        _RefErr::<T>::Other(err)
     }
 }
 
-pub fn resolve_symbolic_reference(
-    repo: &Repository,
+pub fn resolve_symbolic_reference<T: RepositoryT>(
+    repo: &T,
     next_ref: &impl ReferenceSpec,
-) -> Result<UnparsedReference, RefErr> {
+) -> Result<UnparsedReference, _RefErr<T::Error>> {
     let target_ref = repo.find_reference(&next_ref.full())?;
     let target_bytes = target_ref
         .symbolic_target_bytes()
-        .ok_or(RefErr::NotBranch)?;
+        .ok_or(_RefErr::<T::Error>::NotBranch)?;
     String::from_utf8(target_bytes.to_owned())
-        .map_err(|_| RefErr::NotUtf8)
+        .map_err(|_| _RefErr::<T::Error>::NotUtf8)
         .map(|name| UnparsedReference { name })
 }
 

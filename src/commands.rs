@@ -11,8 +11,8 @@ use super::branch::{
 };
 use super::git::{
     get_current_branch, get_git_path, get_toplevel, make_git_command, output_to_string,
-    run_git_command, setting_exists, BranchName, BranchyName, GitError, LocalBranchName,
-    OpenRepoError, RefErr, ReferenceSpec, SettingTarget,
+    run_git_command, setting_exists, BranchName, BranchyName, GitError, GitErrorT, LocalBranchName,
+    OpenRepoError, RefErr as _RefErr, ReferenceSpec, ReferenceT, RepositoryT, SettingTarget,
 };
 use super::worktree::{
     append_lines, base_tree, calc_revno, relative_path, set_target, stash_switch, Commit,
@@ -21,7 +21,7 @@ use super::worktree::{
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use enum_dispatch::enum_dispatch;
-use git2::Repository;
+//use git2::Repository;
 use std::env;
 use std::ffi::OsString;
 use std::fmt;
@@ -37,12 +37,14 @@ fn to_strings(cmd_args: &[&str]) -> Vec<String> {
     cmd_args.iter().map(|s| s.to_string()).collect()
 }
 
+type RefErr = _RefErr<git2::Error>;
+
 #[derive(Debug)]
 pub enum MakeArgsErr {
     GetTreeRefFailure(GitError),
     MergeDiffNoHead,
     MergeDiffFindTarget(FindTargetErr),
-    MergeDiffOpenRepo(OpenRepoError),
+    MergeDiffOpenRepo(OpenRepoError<git2::Error>),
     MergeDiffNoRemembered,
     Restore(CommitErr),
 }
@@ -257,7 +259,7 @@ fn find_target() -> Result<ExtantRefName, FindTargetErr> {
 }
 
 /// Ensure a source branch is set, falling back to remembered branch.
-fn ensure_source(repo: &Repository, source: Option<CommitSpec>) -> Result<CommitSpec, i32> {
+fn ensure_source(repo: &impl RepositoryT, source: Option<CommitSpec>) -> Result<CommitSpec, i32> {
     if let Some(source) = source {
         return Ok(source);
     }
@@ -299,7 +301,7 @@ pub struct Merge {
 impl Runnable for Merge {
     fn run(self) -> i32 {
         let current_branch = get_current_branch().expect("Current branch");
-        let repo = match Repository::open_from_env().map_err(OpenRepoError::from) {
+        let repo = match git2::Repository::open_from_env().map_err(OpenRepoError::from) {
             Ok(repo) => repo,
             Err(err) => {
                 eprintln!("{}", err);
@@ -374,7 +376,8 @@ impl MergeDiff {
             Some(target) => target,
             None => match find_target() {
                 Ok(spec) => {
-                    let repo = match Repository::open_from_env().map_err(OpenRepoError::from) {
+                    let repo = match git2::Repository::open_from_env().map_err(OpenRepoError::from)
+                    {
                         Ok(repo) => repo,
                         Err(err) => {
                             return Err(MakeArgsErr::MergeDiffOpenRepo(err));
@@ -828,7 +831,7 @@ impl SwitchNext {
     }
 }
 
-fn get_local_current(repo: &Repository) -> Result<LocalBranchName, String> {
+fn get_local_current<T: RepositoryT>(repo: &T) -> Result<LocalBranchName, String> {
     let head_ref = repo
         .find_reference("HEAD")
         .map_err(|e| e.message().to_owned())?;
@@ -845,7 +848,7 @@ fn switch_sibling<T: SiblingBranch>(keep: bool) -> i32
 where
     T::BranchError: Display,
 {
-    let repo = match Repository::open_from_env().map_err(OpenRepoError::from) {
+    let repo = match git2::Repository::open_from_env().map_err(OpenRepoError::from) {
         Ok(repo) => repo,
         Err(err) => {
             eprintln!("{}", err);
@@ -934,7 +937,7 @@ pub struct DisconnectBranch {
 
 impl Runnable for DisconnectBranch {
     fn run(self) -> i32 {
-        let repo = Repository::open_from_env().expect("Repository not found");
+        let repo = git2::Repository::open_from_env().expect("Repository not found");
         let Ok(_) = unlink_branch(&repo, &LocalBranchName::from(self.name)) else {
             println!("No such branch.");
             return 1;
@@ -956,7 +959,7 @@ pub struct NextBranch {
 
 impl Runnable for NextBranch {
     fn run(self) -> i32 {
-        let repo = match Repository::open_from_env().map_err(OpenRepoError::from) {
+        let repo = match git2::Repository::open_from_env().map_err(OpenRepoError::from) {
             Ok(repo) => repo,
             Err(err) => {
                 eprintln!("{}", err);
@@ -1031,7 +1034,7 @@ pub struct Pipeline {}
 
 impl Runnable for Pipeline {
     fn run(self) -> i32 {
-        let repo = match Repository::open_from_env().map_err(OpenRepoError::from) {
+        let repo = match git2::Repository::open_from_env().map_err(OpenRepoError::from) {
             Ok(repo) => repo,
             Err(err) => {
                 eprintln!("{}", err);
@@ -1046,7 +1049,7 @@ impl Runnable for Pipeline {
             Ok(current) => current,
         };
         let mut previous = vec![];
-        let mut loop_lb = advance::<PipePrev>(&repo, current_lb.clone());
+        let mut loop_lb = advance::<PipePrev, git2::Repository>(&repo, current_lb.clone());
         loop {
             let tmp = match loop_lb {
                 Err(_) => {
@@ -1057,14 +1060,14 @@ impl Runnable for Pipeline {
                 Ok(None) => break,
             };
             previous.push(tmp.branch_name().to_owned());
-            loop_lb = advance::<PipePrev>(&repo, tmp);
+            loop_lb = advance::<PipePrev, git2::Repository>(&repo, tmp);
         }
         previous.reverse();
         for branch in previous {
             println!("  {}", branch);
         }
         println!("* {}", current_lb.branch_name());
-        let mut loop_lb = advance::<PipeNext>(&repo, current_lb);
+        let mut loop_lb = advance::<PipeNext, git2::Repository>(&repo, current_lb);
         loop {
             let tmp = match loop_lb {
                 Err(_) => {
@@ -1075,24 +1078,24 @@ impl Runnable for Pipeline {
                 Ok(None) => break,
             };
             println!("  {}", tmp.branch_name());
-            loop_lb = advance::<PipeNext>(&repo, tmp);
+            loop_lb = advance::<PipeNext, git2::Repository>(&repo, tmp);
         }
         0
     }
 }
 
-fn advance<T: SiblingBranch + From<LocalBranchName> + ReferenceSpec>(
-    repo: &Repository,
+fn advance<T: SiblingBranch + From<LocalBranchName> + ReferenceSpec, T2: RepositoryT>(
+    repo: &T2,
     current_lb: LocalBranchName,
-) -> Result<Option<LocalBranchName>, RefErr> {
+) -> Result<Option<LocalBranchName>, _RefErr<T2::Error>> {
     let ref_string = match resolve_symbolic_reference(repo, &T::from(current_lb)) {
         Ok(next) => next.name,
-        Err(RefErr::NotFound(_)) => return Ok(None),
+        Err(_RefErr::<T2::Error>::NotFound(_)) => return Ok(None),
         Err(err) => return Err(err),
     };
     match BranchName::from_str(&ref_string) {
         Ok(BranchName::Local(local)) => Ok(Some(local)),
-        _ => Err(RefErr::NotBranch),
+        _ => Err(_RefErr::<T2::Error>::NotBranch),
     }
 }
 
@@ -1156,7 +1159,7 @@ impl Runnable for SquashCommit {
             Ok(head) => head,
             Err(exit_status) => return exit_status,
         };
-        let repo = match Repository::open_from_env().map_err(OpenRepoError::from) {
+        let repo = match git2::Repository::open_from_env().map_err(OpenRepoError::from) {
             Ok(repo) => repo,
             Err(err) => {
                 eprintln!("{}", err);
@@ -1439,7 +1442,7 @@ pub struct Revno {
 impl RunOrError for Revno {
     type Error = CommitErr;
     fn run(self) -> Result<i32, Self::Error> {
-        let repo = Repository::open_from_env()?;
+        let repo = git2::Repository::open_from_env()?;
         let commit_spec = match self.commit {
             Some(spec) => spec,
             None => CommitSpec::from_str("HEAD")?,

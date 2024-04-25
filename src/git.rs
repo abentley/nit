@@ -7,7 +7,6 @@
 // except according to those terms.
 use enum_dispatch::enum_dispatch;
 use git2;
-use git2::{Error, ErrorClass, ErrorCode};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -19,22 +18,22 @@ use std::process::{Command, Output};
 use std::str::{from_utf8, FromStr};
 
 #[derive(Debug)]
-pub enum OpenRepoError {
-    NotFound(Error),
-    Other(Error),
+pub enum OpenRepoError<T: GitErrorT> {
+    NotFound(T),
+    Other(T),
 }
 
 #[derive(Debug)]
-pub enum RefErr {
-    NotFound(Error),
+pub enum RefErr<T: GitErrorT> {
+    NotFound(T),
     NotBranch,
     NotUtf8,
-    Other(Error),
+    Other(T),
 }
 
-impl From<Error> for OpenRepoError {
-    fn from(err: Error) -> OpenRepoError {
-        if err.class() == ErrorClass::Repository && err.code() == ErrorCode::NotFound {
+impl<T: GitErrorT> From<T> for OpenRepoError<T> {
+    fn from(err: T) -> OpenRepoError<T> {
+        if err.class() == git2::ErrorClass::Repository && err.code() == git2::ErrorCode::NotFound {
             OpenRepoError::NotFound(err)
         } else {
             OpenRepoError::Other(err)
@@ -42,7 +41,7 @@ impl From<Error> for OpenRepoError {
     }
 }
 
-impl Display for OpenRepoError {
+impl<T: Display + GitErrorT> Display for OpenRepoError<T> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match &self {
             OpenRepoError::NotFound(_) => {
@@ -137,31 +136,57 @@ pub fn set_setting(
 pub trait ReferenceT {
     fn shorthand(&self) -> Option<&str>;
     fn name(&self) -> Option<&str>;
+    fn symbolic_target(&self) -> Option<&str>;
+    fn symbolic_target_bytes(&self) -> Option<&[u8]>;
 }
 
 impl ReferenceT for git2::Reference<'_> {
     fn shorthand(&self) -> Option<&str> {
-        self.shorthand()
+        git2::Reference::symbolic_target(self)
     }
     fn name(&self) -> Option<&str> {
-        self.name()
+        git2::Reference::symbolic_target(self)
+    }
+    fn symbolic_target(&self) -> Option<&str> {
+        git2::Reference::symbolic_target(self)
+    }
+    fn symbolic_target_bytes(&self) -> Option<&[u8]> {
+        git2::Reference::symbolic_target_bytes(self)
     }
 }
 
-pub trait GitErrorT{
+pub trait GitErrorT {
+    fn class(&self) -> git2::ErrorClass;
+    fn code(&self) -> git2::ErrorCode;
+    fn message(&self) -> &str;
 }
 
 impl GitErrorT for git2::Error {
+    fn class(&self) -> git2::ErrorClass {
+        self.class()
+    }
+    fn code(&self) -> git2::ErrorCode {
+        self.code()
+    }
+    fn message(&self) -> &str {
+        git2::Error::message(self)
+    }
 }
 
-pub trait RevwalkT{
+pub trait OidT {}
+
+impl OidT for git2::Oid {}
+
+pub trait RevwalkT {
     type Error: GitErrorT;
-    fn push(&mut self, oid: git2::Oid) -> Result<(),Self::Error>;
+    type Oid: OidT;
+    fn push(&mut self, oid: Self::Oid) -> Result<(), Self::Error>;
 }
 
-impl RevwalkT for git2::Revwalk<'_>{
+impl RevwalkT for git2::Revwalk<'_> {
     type Error = git2::Error;
-    fn push(&mut self, oid: git2::Oid) -> Result<(),Self::Error>{
+    type Oid = git2::Oid;
+    fn push(&mut self, oid: Self::Oid) -> Result<(), Self::Error> {
         git2::Revwalk::push(self, oid)
     }
 }
@@ -171,7 +196,10 @@ pub trait RepositoryT {
     where
         Self: 'a;
     type Error: GitErrorT;
-    type Revwalk<'a>: RevwalkT where Self: 'a;
+    type Revwalk<'a>: RevwalkT
+    where
+        Self: 'a;
+    type Oid: OidT;
     fn find_reference(&self, name: &str) -> Result<Self::Reference<'_>, Self::Error>;
     fn resolve_reference_from_short_name(
         &self,
@@ -185,6 +213,7 @@ impl RepositoryT for git2::Repository {
     type Reference<'a> = git2::Reference<'a>;
     type Error = git2::Error;
     type Revwalk<'a> = git2::Revwalk<'a>;
+    type Oid = git2::Oid;
     fn find_reference(&self, name: &str) -> Result<Self::Reference<'_>, git2::Error> {
         return git2::Repository::find_reference(self, name);
     }
@@ -449,7 +478,7 @@ impl RefName {
         RefName::Long { full, short }
     }
     /// Convert long refname or shorthand into a RefName
-    pub fn from_any(any: String, repo: &impl RepositoryT) -> Result<Self, RefErr> {
+    pub fn from_any(any: String, repo: &impl RepositoryT) -> Result<Self, RefErr<git2::Error>> {
         let target = repo.resolve_reference_from_short_name(&any)?;
         Ok(if let Some(name) = target.name() {
             if name == any {
@@ -542,7 +571,7 @@ impl BranchyName {
             BranchyName::UnresolvedName(unresolved) => unresolved.into(),
         }
     }
-    pub fn resolve(self, repo: &impl RepositoryT) -> Result<BranchyName, RefErr> {
+    pub fn resolve(self, repo: &impl RepositoryT) -> Result<BranchyName, RefErr<git2::Error>> {
         let BranchyName::UnresolvedName(target) = &self else {
             return Ok(self);
         };
