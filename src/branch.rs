@@ -280,7 +280,7 @@ pub fn find_target_branchname(
 
 #[derive(Debug, PartialEq)]
 pub enum _LinkFailure<'repo, T> {
-    BranchValidationError(BranchValidationError<'repo>),
+    BranchValidationError(_BranchValidationError<'repo, git2::Reference<'repo>>),
     PrevReferenceExists,
     NextReferenceExists,
     SameReference,
