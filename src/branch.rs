@@ -10,7 +10,7 @@ use super::git::{
     ReferenceSpec, ReferenceT, RepositoryT, SettingEntry, SettingTarget, UnparsedReference,
 };
 use super::worktree::{target_branch_setting, Commit, Commitish, ExtantRefName};
-use git2::{ErrorClass, ErrorCode, Reference, Repository};
+use git2::{ErrorClass, ErrorCode, Reference};
 use std::borrow::Cow;
 use std::fmt;
 use std::fmt::{Display, Formatter};
@@ -80,12 +80,12 @@ pub trait SiblingBranch: From<LocalBranchName> + ReferenceSpec {
     fn name(&self) -> &LocalBranchName;
     fn check_link<'repo>(
         &self,
-        repo: &'repo Repository,
+        repo: &'repo impl RepositoryT,
         new: LocalBranchName,
     ) -> Result<CheckedBranchLinks, LinkFailure<'repo>>;
     fn insert_branch(
         self,
-        repo: &Repository,
+        repo: &impl RepositoryT,
         new: LocalBranchName,
     ) -> Result<(PipeNext, PipePrev), LinkFailure> {
         self.check_link(repo, new)?.link(repo)
@@ -135,7 +135,7 @@ impl SiblingBranch for PipeNext {
     }
     fn check_link<'repo>(
         &self,
-        repo: &'repo Repository,
+        repo: &'repo impl RepositoryT,
         new: LocalBranchName,
     ) -> Result<CheckedBranchLinks, LinkFailure<'repo>> {
         check_link_branches(repo, self.clone(), new.into())
@@ -175,7 +175,7 @@ impl SiblingBranch for PipePrev {
     }
     fn check_link<'repo>(
         &self,
-        repo: &'repo Repository,
+        repo: &'repo impl RepositoryT,
         new: LocalBranchName,
     ) -> Result<CheckedBranchLinks, LinkFailure<'repo>> {
         check_link_branches(repo, new.into(), self.clone())
@@ -279,13 +279,15 @@ pub fn find_target_branchname(
 }
 
 #[derive(Debug, PartialEq)]
-pub enum LinkFailure<'repo> {
+pub enum _LinkFailure<'repo, T> {
     BranchValidationError(BranchValidationError<'repo>),
     PrevReferenceExists,
     NextReferenceExists,
     SameReference,
-    Git2Error(git2::Error),
+    Git2Error(T),
 }
+
+pub type LinkFailure<'repo> = _LinkFailure<'repo, git2::Error>;
 
 impl From<git2::Error> for LinkFailure<'_> {
     fn from(err: git2::Error) -> LinkFailure<'static> {
@@ -312,16 +314,16 @@ impl Display for LinkFailure<'_> {
 }
 
 #[derive(PartialEq)]
-pub enum BranchValidationError<'repo> {
-    NotLocalBranch(&'repo Reference<'repo>),
-    NotUtf8(&'repo Reference<'repo>),
+pub enum _BranchValidationError<'repo, T: ReferenceT> {
+    NotLocalBranch(&'repo T),
+    NotUtf8(&'repo T),
 }
-
-impl fmt::Debug for BranchValidationError<'_> {
+pub type BranchValidationError<'a> = _BranchValidationError<'a, git2::Reference<'a>>;
+impl<'a, T: ReferenceT> fmt::Debug for _BranchValidationError<'a, T> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match &self {
-            BranchValidationError::NotLocalBranch(_) => write!(formatter, "Not local branch"),
-            BranchValidationError::NotUtf8(_) => write!(formatter, "Not UTF-8"),
+            _BranchValidationError::<'a, T>::NotLocalBranch(_) => write!(formatter, "Not local branch"),
+            _BranchValidationError::<'a, T>::NotUtf8(_) => write!(formatter, "Not UTF-8"),
         }
     }
 }
@@ -357,7 +359,7 @@ pub struct CheckedBranchLinks {
  * On success, return the next and previous branches as (PipeNext / PipePrev).
  */
 pub fn check_link_branches(
-    repo: &Repository,
+    repo: &impl RepositoryT,
     next_reference: PipeNext,
     prev_reference: PipePrev,
 ) -> Result<CheckedBranchLinks, LinkFailure> {
@@ -377,7 +379,7 @@ pub fn check_link_branches(
 }
 
 impl CheckedBranchLinks {
-    pub fn link(self, repo: &Repository) -> Result<(PipeNext, PipePrev), LinkFailure<'_>> {
+    pub fn link(self, repo: &impl RepositoryT) -> Result<(PipeNext, PipePrev), LinkFailure<'_>> {
         repo.reference_symbolic(
             &self.next_reference.full(),
             &self.prev_reference.name().full(),
@@ -394,7 +396,7 @@ impl CheckedBranchLinks {
     }
 }
 
-fn unlink_siblings<T: SiblingBranch>(repo: &Repository, next: T) -> Option<LocalBranchName> {
+fn unlink_siblings<T: SiblingBranch>(repo: &impl RepositoryT, next: T) -> Option<LocalBranchName> {
     let mut next_reference = next.find_reference(repo).ok()?;
     let next_target = next_reference.symbolic_target();
     let resolved = next_target.expect("Next link is not utf-8 symbolic");
@@ -414,7 +416,7 @@ pub enum UnlinkBranchError {
     NoSuchBranch,
 }
 
-pub fn unlink_branch(repo: &Repository, branch: &LocalBranchName) -> Result<(), UnlinkBranchError> {
+pub fn unlink_branch(repo: &impl RepositoryT, branch: &LocalBranchName) -> Result<(), UnlinkBranchError> {
     let next = unlink_siblings(repo, PipeNext::from(branch.clone()));
     let prev = unlink_siblings(repo, PipePrev::from(branch.clone()));
     if next.is_none() && prev.is_none() && ExtantRefName::resolve(&branch.full()).is_none() {

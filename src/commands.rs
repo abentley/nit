@@ -7,8 +7,11 @@
 // except according to those terms.
 use super::branch::{
     check_link_branches, find_target_branchname, resolve_symbolic_reference, unlink_branch,
-    BranchValidationError, NextRefErr, PipeNext, PipePrev, SiblingBranch,
+    _BranchValidationError, NextRefErr, PipeNext, PipePrev, SiblingBranch,
 };
+
+pub type BranchValidationError<'a> = _BranchValidationError<'a, git2::Reference<'a>>;
+
 use super::git::{
     get_current_branch, get_git_path, get_toplevel, make_git_command, output_to_string,
     run_git_command, setting_exists, BranchName, BranchyName, GitError, GitErrorT, LocalBranchName,

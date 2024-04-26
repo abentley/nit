@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -138,6 +138,7 @@ pub trait ReferenceT {
     fn name(&self) -> Option<&str>;
     fn symbolic_target(&self) -> Option<&str>;
     fn symbolic_target_bytes(&self) -> Option<&[u8]>;
+    fn delete(&mut self) -> Result<(), git2::Error>;
 }
 
 impl ReferenceT for git2::Reference<'_> {
@@ -152,6 +153,9 @@ impl ReferenceT for git2::Reference<'_> {
     }
     fn symbolic_target_bytes(&self) -> Option<&[u8]> {
         git2::Reference::symbolic_target_bytes(self)
+    }
+    fn delete(&mut self) -> Result<(), git2::Error>{
+        git2::Reference::delete(self)
     }
 }
 
@@ -195,7 +199,7 @@ pub trait RepositoryT {
     type Reference<'a>: ReferenceT
     where
         Self: 'a;
-    type Error: GitErrorT;
+    type Error: GitErrorT + Debug;
     type Revwalk<'a>: RevwalkT
     where
         Self: 'a;
@@ -207,6 +211,7 @@ pub trait RepositoryT {
     ) -> Result<Self::Reference<'_>, git2::Error>;
     fn revwalk(&self) -> Result<git2::Revwalk<'_>, git2::Error>;
     fn parse_oid(sha: &str) -> Result<git2::Oid, git2::Error>;
+    fn reference_symbolic( &self, one: &str, two: &str, three: bool, four: &str) -> Result<Self::Reference<'_>, git2::Error>;
 }
 
 impl RepositoryT for git2::Repository {
@@ -228,6 +233,9 @@ impl RepositoryT for git2::Repository {
     }
     fn parse_oid(sha: &str) -> Result<git2::Oid, git2::Error> {
         sha.parse::<git2::Oid>()
+    }
+    fn reference_symbolic( &self, one: &str, two: &str, three: bool, four: &str)  -> Result<Self::Reference<'_>, git2::Error>{
+        self.reference_symbolic(one, two, three, four)
     }
 }
 
@@ -621,7 +629,7 @@ impl fmt::Display for GitError {
             GitError::UnknownError(stderr) => {
                 write!(f, "Unknown Error {}", stderr.to_string_lossy())
             }
-            GitError::Git2Error(err) => err.fmt(f),
+            GitError::Git2Error(err) => std::fmt::Display::fmt(&err, f),
         }
     }
 }
