@@ -6,8 +6,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 use super::branch::{
-    check_link_branches, find_target_branchname, resolve_symbolic_reference, unlink_branch,
-    _BranchValidationError, NextRefErr, PipeNext, PipePrev, SiblingBranch,
+    _BranchValidationError, check_link_branches, find_target_branchname,
+    resolve_symbolic_reference, unlink_branch, NextRefErr, PipeNext, PipePrev, SiblingBranch,
 };
 
 pub type BranchValidationError<'a> = _BranchValidationError<'a, git2::Reference<'a>>;

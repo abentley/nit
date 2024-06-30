@@ -322,7 +322,9 @@ pub type BranchValidationError<'a> = _BranchValidationError<'a, git2::Reference<
 impl<'a, T: ReferenceT> fmt::Debug for _BranchValidationError<'a, T> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match &self {
-            _BranchValidationError::<'a, T>::NotLocalBranch(_) => write!(formatter, "Not local branch"),
+            _BranchValidationError::<'a, T>::NotLocalBranch(_) => {
+                write!(formatter, "Not local branch")
+            }
             _BranchValidationError::<'a, T>::NotUtf8(_) => write!(formatter, "Not UTF-8"),
         }
     }
@@ -416,7 +418,10 @@ pub enum UnlinkBranchError {
     NoSuchBranch,
 }
 
-pub fn unlink_branch(repo: &impl RepositoryT, branch: &LocalBranchName) -> Result<(), UnlinkBranchError> {
+pub fn unlink_branch(
+    repo: &impl RepositoryT,
+    branch: &LocalBranchName,
+) -> Result<(), UnlinkBranchError> {
     let next = unlink_siblings(repo, PipeNext::from(branch.clone()));
     let prev = unlink_siblings(repo, PipePrev::from(branch.clone()));
     if next.is_none() && prev.is_none() && ExtantRefName::resolve(&branch.full()).is_none() {

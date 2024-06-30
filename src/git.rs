@@ -154,7 +154,7 @@ impl ReferenceT for git2::Reference<'_> {
     fn symbolic_target_bytes(&self) -> Option<&[u8]> {
         git2::Reference::symbolic_target_bytes(self)
     }
-    fn delete(&mut self) -> Result<(), git2::Error>{
+    fn delete(&mut self) -> Result<(), git2::Error> {
         git2::Reference::delete(self)
     }
 }
@@ -211,7 +211,13 @@ pub trait RepositoryT {
     ) -> Result<Self::Reference<'_>, git2::Error>;
     fn revwalk(&self) -> Result<git2::Revwalk<'_>, git2::Error>;
     fn parse_oid(sha: &str) -> Result<git2::Oid, git2::Error>;
-    fn reference_symbolic( &self, one: &str, two: &str, three: bool, four: &str) -> Result<Self::Reference<'_>, git2::Error>;
+    fn reference_symbolic(
+        &self,
+        one: &str,
+        two: &str,
+        three: bool,
+        four: &str,
+    ) -> Result<Self::Reference<'_>, git2::Error>;
 }
 
 impl RepositoryT for git2::Repository {
@@ -234,7 +240,13 @@ impl RepositoryT for git2::Repository {
     fn parse_oid(sha: &str) -> Result<git2::Oid, git2::Error> {
         sha.parse::<git2::Oid>()
     }
-    fn reference_symbolic( &self, one: &str, two: &str, three: bool, four: &str)  -> Result<Self::Reference<'_>, git2::Error>{
+    fn reference_symbolic(
+        &self,
+        one: &str,
+        two: &str,
+        three: bool,
+        four: &str,
+    ) -> Result<Self::Reference<'_>, git2::Error> {
         self.reference_symbolic(one, two, three, four)
     }
 }

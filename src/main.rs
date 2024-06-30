@@ -8,7 +8,7 @@
 #![cfg_attr(feature = "strict", deny(warnings))]
 use clap::Parser;
 use std::env;
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::exit;
 
 use commands::{NativeCommand, RunExit};
@@ -28,8 +28,7 @@ fn is_oaf_cmd(args_vec: &[String]) -> bool {
 
 fn extract_cmd(progname: &str) -> Option<&str> {
     match progname.split_once('-') {
-        Some(("git", _)) => None,
-        Some((_, cmd)) => Some(cmd),
+        Some(("git", cmd)) => Some(cmd),
         _ => None,
     }
 }
@@ -39,14 +38,15 @@ fn extract_cmd(progname: &str) -> Option<&str> {
  *
  * Otherwise, return the result of parsing args as a NativeCommand.
  */
-fn parse_args(args_vec: &Vec<String>) -> Option<NativeCommand> {
-    let mut args_iter = args_vec.clone().into_iter();
-    let progpath = PathBuf::from(args_iter.next().expect("Invoked with 0 arguments"));
-    let progname = progpath.file_name().unwrap().to_str().unwrap();
+fn parse_args(args_vec: Vec<String>) -> Result<NativeCommand, Vec<String>> {
+    let progname = Path::new(args_vec.first().expect("Has args"))
+        .file_name()
+        .and_then(|x| x.to_str())
+        .unwrap();
     let opt = match progname {
         "oaf" => {
-            if args_vec.len() > 1 && !is_oaf_cmd(args_vec) {
-                return None;
+            if args_vec.len() > 1 && !is_oaf_cmd(&args_vec) {
+                return Err(args_vec);
             }
             NativeCommand::parse()
         }
@@ -56,17 +56,19 @@ fn parse_args(args_vec: &Vec<String>) -> Option<NativeCommand> {
                 exit(1);
             };
             let mut args = vec!["oaf".to_string(), cmd.to_string()];
+            let mut args_iter = args_vec.into_iter();
+            args_iter.next().expect("Invoked with 0 arguments");
             args.extend(args_iter);
             NativeCommand::parse_from(args)
         }
     };
-    Some(opt)
+    Ok(opt)
 }
 
 fn main() {
     let args_vec = env::args().collect();
-    let Some(args) = parse_args(&args_vec) else {
-        args_vec[1..].to_owned().run_exit();
+    match parse_args(args_vec) {
+        Ok(args) => args.run_exit(),
+        Err(args_vec) => args_vec[1..].to_owned().run_exit(),
     };
-    args.run_exit();
 }
