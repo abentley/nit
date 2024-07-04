@@ -11,15 +11,15 @@ fn find_sibling<'repo, T: From<LocalBranchName> + ReferenceSpec>(
     branch: &LocalBranchName,
     repo: &'repo Repository,
 ) -> Result<Reference<'repo>, git2::Error> {
-    T::from(branch.clone()).find_reference(&repo)
+    T::from(branch.clone()).find_reference(repo)
 }
 
 fn make_two_pipeline(repo: &Repository) -> (LocalBranchName, LocalBranchName) {
     let foo = LocalBranchName::from("foo".to_string());
     let bar = LocalBranchName::from("bar".to_string());
-    check_link_branches(&repo, foo.clone().into(), bar.clone().into())
+    check_link_branches(repo, foo.clone().into(), bar.clone().into())
         .unwrap()
-        .link(&repo)
+        .link(repo)
         .unwrap();
     (foo, bar)
 }
@@ -27,9 +27,9 @@ fn make_two_pipeline(repo: &Repository) -> (LocalBranchName, LocalBranchName) {
 fn make_three_pipeline(repo: &Repository) -> (LocalBranchName, LocalBranchName, LocalBranchName) {
     let (foo, bar) = make_two_pipeline(repo);
     let baz = LocalBranchName::from("baz".to_string());
-    check_link_branches(&repo, bar.clone().into(), baz.clone().into())
+    check_link_branches(repo, bar.clone().into(), baz.clone().into())
         .unwrap()
-        .link(&repo)
+        .link(repo)
         .unwrap();
     (foo, bar, baz)
 }
